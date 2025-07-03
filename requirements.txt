@@ -1,0 +1,7 @@
+Flask
+tensorflow
+opencv-python
+ultralytics
+numpy
+Pillow
+gunicorn
