@@ -1,72 +1,72 @@
 import cv2
 import numpy as np
 import tensorflow as tf
-from ultralytics import YOLO # Mengimpor YOLO untuk deteksi objek
+from ultralytics import YOLO  # Import YOLO for object detection
 import time
-from flask import Flask, render_template, Response # Untuk antarmuka web
+from flask import Flask, render_template, Response  # For web interface
 
-# --- 1. Muat Model Klasifikasi Smoking/Not_Smoking ---
-# Pastikan nama file cocok dengan yang diunduh dari Colab
+# --- 1. Load Smoking/Not_Smoking Classifier Model ---
+# Ensure the filename matches the one downloaded from Colab
 MODEL_CLASSIFIER_PATH = 'smoking_classifier_deployment_model.keras'
 try:
     classifier_model = tf.keras.models.load_model(MODEL_CLASSIFIER_PATH)
-    print(f"✅ Model klasifikasi Smoking/Not_Smoking berhasil dimuat dari '{MODEL_CLASSIFIER_PATH}'.")
+    print(f"✅ Smoking/Not_Smoking classifier model successfully loaded from '{MODEL_CLASSIFIER_PATH}'.")
 except Exception as e:
-    print(f"❌ Error saat memuat model klasifikasi: {e}")
-    print(f"Pastikan '{MODEL_CLASSIFIER_PATH}' ada di direktori yang sama.")
+    print(f"❌ Error loading classifier model: {e}")
+    print(f"Make sure '{MODEL_CLASSIFIER_PATH}' is in the same directory.")
     exit()
 
-# --- 2. Muat Model Deteksi Objek (YOLOv8 untuk Deteksi Orang) ---
-# YOLOv8n (nano) adalah versi yang ringan dan cukup cepat
-# Model akan otomatis diunduh jika belum ada
+# --- 2. Load Object Detection Model (YOLOv8 for Person Detection) ---
+# YOLOv8n (nano) is a lightweight and fast version
+# The model will be downloaded automatically if not present
 try:
-    person_detector = YOLO('yolov8n.pt') # Menggunakan model pre-trained COCO untuk berbagai objek
-    print("✅ Model deteksi objek YOLOv8 (yolov8n.pt) berhasil dimuat.")
+    person_detector = YOLO('yolov8n.pt')  # Using pre-trained COCO model for various objects
+    print("✅ YOLOv8 object detection model (yolov8n.pt) loaded successfully.")
 except Exception as e:
-    print(f"❌ Error saat memuat model YOLOv8: {e}")
-    print("Pastikan Anda memiliki koneksi internet untuk mengunduh model YOLOv8n.pt pertama kali, atau unduh secara manual.")
+    print(f"❌ Error loading YOLOv8 model: {e}")
+    print("Make sure you have an internet connection to download YOLOv8n.pt for the first time, or download manually.")
     exit()
 
-# --- 3. Definisi Parameter Global ---
-IMG_WIDTH, IMG_HEIGHT = 150, 150 # Ukuran input untuk model klasifikasi
-CONFIDENCE_THRESHOLD_SMOKING = 0.6 # Ambang batas kepercayaan untuk klasifikasi 'Smoking' (bisa disesuaikan)
-CONFIDENCE_THRESHOLD_PERSON = 0.5 # Ambang batas kepercayaan untuk deteksi orang oleh YOLO
+# --- 3. Global Parameter Definitions ---
+IMG_WIDTH, IMG_HEIGHT = 150, 150  # Input size for the classifier model
+CONFIDENCE_THRESHOLD_SMOKING = 0.6  # Confidence threshold for 'Smoking' classification
+CONFIDENCE_THRESHOLD_PERSON = 0.5  # Confidence threshold for YOLO person detection
 
-# Kelas 'person' di COCO dataset adalah kelas 0
+# 'person' class in COCO dataset is class ID 0
 PERSON_CLASS_ID = 0
 
-# --- 4. Fungsi Prediksi Klasifikasi Merokok ---
+# --- 4. Smoking Classification Prediction Function ---
 def predict_smoking_status(image_patch):
     if image_patch is None or image_patch.size == 0 or image_patch.shape[0] == 0 or image_patch.shape[1] == 0:
         return "Not_Smoking", 0.0
 
-    # 1. Dapatkan rasio aspek patch asli
+    # 1. Get the original aspect ratio of the patch
     h_orig, w_orig, _ = image_patch.shape
     aspect_ratio_orig = w_orig / h_orig
 
-    # 2. Hitung ukuran baru dengan mempertahankan rasio aspek, lalu tambahkan padding
+    # 2. Calculate new size while maintaining aspect ratio, then apply padding
     target_w, target_h = IMG_WIDTH, IMG_HEIGHT
 
-    if aspect_ratio_orig > (target_w / target_h): # Jika patch lebih lebar dari target
+    if aspect_ratio_orig > (target_w / target_h):  # If patch is wider than target
         new_w = target_w
         new_h = int(target_w / aspect_ratio_orig)
-    else: # Jika patch lebih tinggi dari target
+    else:  # If patch is taller than target
         new_h = target_h
         new_w = int(target_h * aspect_ratio_orig)
 
     resized_patch = cv2.resize(image_patch, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-    # Buat kanvas kosong (hitam) untuk padding
-    padded_patch = np.full((target_h, target_w, 3), 0, dtype=np.uint8) # Hitam sebagai padding
+    # Create empty (black) canvas for padding
+    padded_patch = np.full((target_h, target_w, 3), 0, dtype=np.uint8)  # Black padding
 
-    # Hitung posisi untuk menempatkan gambar yang di-resize di tengah kanvas
+    # Calculate position to center the resized image on the canvas
     x_offset = (target_w - new_w) // 2
     y_offset = (target_h - new_h) // 2
 
-    # Tempel gambar yang di-resize ke kanvas
+    # Paste the resized image onto the canvas
     padded_patch[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = resized_patch
 
-    # Normalisasi
+    # Normalize the image
     processed_patch = np.expand_dims(padded_patch, axis=0) / 255.0
 
     prediction = classifier_model.predict(processed_patch, verbose=0)[0][0]
@@ -75,14 +75,14 @@ def predict_smoking_status(image_patch):
 
     return label, confidence
 
-# --- 5. Fungsi Generator Frame untuk Video Stream ---
+# --- 5. Frame Generator Function for Video Stream ---
 def gen_frames():
-    # Menggunakan kamera (0) sebagai sumber video
-    # Ganti '0' dengan path file video (misal: 'media/video_test.mp4') jika ingin dari file
+    # Use camera (0) as the video source
+    # Replace '0' with video file path (e.g., 'media/video_test.mp4') to use from file
     cap = cv2.VideoCapture(0)
 
     if not cap.isOpened():
-        print("❌ Error: Tidak dapat membuka sumber video. Pastikan kamera terhubung atau path video benar.")
+        print("❌ Error: Cannot open video source. Make sure the camera is connected or the video path is correct.")
         return
 
     frame_count = 0
@@ -92,94 +92,94 @@ def gen_frames():
     while True:
         success, frame = cap.read()
         if not success:
-            print("Peringatan: Gagal membaca frame. Mungkin akhir video atau masalah kamera.")
+            print("Warning: Failed to read frame. May be end of video or camera issue.")
             break
         else:
             frame_count += 1
-            # Balik frame secara horizontal untuk tampilan selfie (opsional, bisa dihapus)
+            # Flip frame horizontally for selfie view (optional, can be removed)
             frame = cv2.flip(frame, 1)
 
-            # --- Deteksi Orang Menggunakan YOLOv8 ---
-            # 'verbose=False' untuk menonaktifkan output log YOLO
-            # 'conf' untuk ambang batas kepercayaan deteksi objek YOLO
-            # 'classes=[PERSON_CLASS_ID]' untuk hanya mendeteksi kelas 'person'
+            # --- Person Detection Using YOLOv8 ---
+            # 'verbose=False' disables YOLO logs
+            # 'conf' sets the object detection confidence threshold
+            # 'classes=[PERSON_CLASS_ID]' restricts detection to 'person' class only
             results = person_detector(frame, verbose=False, conf=CONFIDENCE_THRESHOLD_PERSON, classes=[PERSON_CLASS_ID])
 
-            # Iterasi melalui setiap deteksi orang
+            # Iterate over each detected person
             for r in results:
-                boxes = r.boxes # Mendapatkan bounding boxes dari hasil deteksi
+                boxes = r.boxes  # Get bounding boxes from detection results
                 for box in boxes:
-                    # box.xyxy[0] memberikan [x1, y1, x2, y2]
+                    # box.xyxy[0] returns [x1, y1, x2, y2]
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-                    # Pastikan koordinat bounding box tidak di luar batas frame
+                    # Ensure bounding box coordinates are within frame boundaries
                     y1 = max(0, y1)
                     y2 = min(frame.shape[0], y2)
                     x1 = max(0, x1)
                     x2 = min(frame.shape[1], x2)
 
-                    # Pastikan area yang dipotong valid
+                    # Ensure cropped area is valid
                     if x2 > x1 and y2 > y1:
-                        # Potong area orang dari frame asli
+                        # Crop the person area from the original frame
                         person_patch = frame[y1:y2, x1:x2]
 
-                        # --- Klasifikasi Smoking/Not_Smoking pada area orang yang terdeteksi ---
+                        # --- Run Smoking/Not_Smoking classification on detected person area ---
                         label, confidence = predict_smoking_status(person_patch)
 
-                        # Tentukan warna untuk bounding box dan teks
-                        # Merah untuk 'Smoking', Hijau untuk 'Not_Smoking'
+                        # Set color for bounding box and text
+                        # Red for 'Smoking', Green for 'Not_Smoking'
                         color = (0, 0, 255) if label == "Smoking" else (0, 255, 0)
                         
-                        # Gambar bounding box di sekitar orang
+                        # Draw bounding box around person
                         cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
                         
-                        # Siapkan teks untuk ditampilkan
-                        display_text = f"Orang ({label}): {confidence:.2f}"
+                        # Prepare text to display
+                        display_text = f"Person ({label}): {confidence:.2f}"
                         
-                        # Tambahkan teks label di atas bounding box
-                        # Hitung posisi teks agar tidak keluar dari frame
+                        # Draw label text above the bounding box
+                        # Calculate position so it doesn’t go off-frame
                         text_x = x1
-                        text_y = y1 - 10 if y1 - 10 > 10 else y1 + 20 # Pindahkan ke bawah jika terlalu dekat atas
+                        text_y = y1 - 10 if y1 - 10 > 10 else y1 + 20  # Move down if too close to top
                         cv2.putText(frame, display_text, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
-            # Hitung dan tampilkan FPS (Frames Per Second)
+            # Calculate and display FPS (Frames Per Second)
             current_time = time.time()
-            if (current_time - start_time) > 1: # Update FPS setiap 1 detik
+            if (current_time - start_time) > 1:  # Update FPS every 1 second
                 fps = frame_count / (current_time - start_time)
                 start_time = current_time
                 frame_count = 0
             
-            # Tampilkan FPS di sudut kiri atas frame
+            # Show FPS at top-left corner
             cv2.putText(frame, f"FPS: {int(fps)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2, cv2.LINE_AA)
 
-            # Encode frame ke format JPEG untuk streaming web
+            # Encode frame into JPEG format for web streaming
             ret, buffer = cv2.imencode('.jpg', frame)
             frame_bytes = buffer.tobytes()
             yield (b'--frame\n'
-                    b'Content-Type: image/jpeg\n\n' + frame_bytes + b'\n')
+                   b'Content-Type: image/jpeg\n\n' + frame_bytes + b'\n')
 
-    # Setelah loop selesai, bebaskan sumber video dan tutup semua jendela OpenCV
+    # After loop ends, release video source and close all OpenCV windows
     cap.release()
     cv2.destroyAllWindows()
-    print("Stream video selesai.")
+    print("Video stream ended.")
 
-# --- 6. Bagian Aplikasi Flask ---
-# Menginisialisasi aplikasi Flask dan menentukan folder template sebagai direktori saat ini ('.')
+# --- 6. Flask App Section ---
+# Initialize Flask app and set template folder to current directory ('.')
 app = Flask(__name__, template_folder='.')
 
 @app.route('/')
 def index():
-    """Halaman utama aplikasi web."""
-    # Flask sekarang akan mencari 'index.html' di direktori yang sama dengan 'app.py'
+    """Main page of the web application."""
+    # Flask will now look for 'index.html' in the same directory as 'app.py'
     return render_template('index.html')
 
 @app.route('/video_feed')
 def video_feed():
-    """Endpoint untuk streaming video."""
+    """Endpoint for video streaming."""
     return Response(gen_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 if __name__ == '__main__':
-    print("\n🚀 Menjalankan aplikasi Flask...")
-    print("Akses aplikasi di http://127.0.0.1:5000 di browser Anda.")
-    # 'debug=True' untuk pengembangan, 'use_reloader=False' agar tidak memuat ulang model dua kali
+    print("\n🚀 Running Flask application...")
+    print("Access the app at http://127.0.0.1:5000 in your browser.")
+    # 'debug=True' for development, 'use_reloader=False' to avoid loading model twice
     app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
